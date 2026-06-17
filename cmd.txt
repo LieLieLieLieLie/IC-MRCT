@@ -1,0 +1,8 @@
+正式跑完整实验用：
+python main.py --mode all --n_scenes 100
+
+只跑 baseline 对比：
+python main.py --mode eval --n_scenes 100
+
+只跑消融：
+python main.py --mode ablation --n_scenes 100
