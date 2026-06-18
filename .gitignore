@@ -2,3 +2,7 @@ __pycache__/
 .idea/
 *.pyc
 *.pyo
+results/
+dataset/
+*.pkl
+*.xlsx

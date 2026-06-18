@@ -620,10 +620,13 @@ def plot_full_path(full_path: List[Dict], ordered_defects, cfg, save_path: str, 
     fig.subplots_adjust(bottom=0.22)
     _save(fig, save_path)
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    paper_figs = os.path.join(script_dir, "..", "paper", "figures")
-    if os.path.isdir(paper_figs):
-        root, _ = os.path.splitext(save_path)
-        shutil.copy2(root + ".pdf", os.path.join(paper_figs, os.path.basename(root + ".pdf")))
+    root, _ = os.path.splitext(save_path)
+    for rel in [os.path.join("..", "paper", "IEEE", "figures"),
+                os.path.join("..", "paper", "elsevier", "figures"),
+                os.path.join("..", "paper", "figures")]:
+        dest_dir = os.path.join(script_dir, rel)
+        if os.path.isdir(dest_dir):
+            shutil.copy2(root + ".pdf", os.path.join(dest_dir, os.path.basename(root + ".pdf")))
 
 
 def plot_path_density_heatmap(full_path: List[Dict], cfg, save_path: str):
@@ -681,40 +684,158 @@ def plot_posture_continuity(full_path: List[Dict], save_path: str):
         return
     dots = np.clip((normals[:-1] * normals[1:]).sum(1), -1, 1)
     angles = np.degrees(np.arccos(dots))
-    idx = np.arange(len(angles))
+    idx    = np.arange(len(angles))
+
+    zones  = [p.get("zone", "repair") for p in full_path[:-1]]
+
     window = max(5, len(angles) // 160)
     smooth = np.convolve(angles, np.ones(window) / window, mode="same")
 
-    FS  = FONT_SIZE + 2
-    TFS = FS + 1
+    az = np.degrees(np.arctan2(normals[:, 0], normals[:, 2]))
+    el = np.degrees(np.arcsin(np.clip(normals[:, 1], -1, 1)))
 
-    fig, axes = plt.subplots(1, 2, figsize=(15.8, 5.6), constrained_layout=True)
-    ax0, ax1 = axes
-    ax0.fill_between(idx, angles, color=OURS_COLOR, alpha=0.20)
-    ax0.plot(idx, angles, color=OURS_COLOR, lw=1.4, alpha=0.72, label="Instantaneous")
-    ax0.plot(idx, smooth, color="#333333", lw=2.6, label="Moving average")
-    ax0.axhline(15.0, color="#777777", lw=1.8, ls="--", label="Threshold")
-    ax0.set_title("(a) Tool-normal change along the full path",
-                  pad=14, fontsize=TFS, fontweight="bold")
+    ZONE_COLORS = {"repair": "#D0E8FF", "transit": "#FFE5CC", "approach": "#D6F5D6", "retract": "#D6F5D6"}
+    ZONE_LABELS = {"repair": "Repair", "transit": "Transit", "approach": "App./Ret.", "retract": None}
+
+    FS  = FONT_SIZE + 5
+    TFS = FS + 6
+
+    fig = plt.figure(figsize=(20, 13), constrained_layout=False)
+    fig.subplots_adjust(left=0.07, right=0.97, top=0.93, bottom=0.08, hspace=0.52)
+    # Top row spans full width; bottom row uses nested spec for tighter (b)–(c) gap
+    gs_outer = fig.add_gridspec(2, 1, height_ratios=[1.35, 1.0],
+                                 left=0.07, right=0.97, top=0.93, bottom=0.08,
+                                 hspace=0.52)
+    ax0 = fig.add_subplot(gs_outer[0])
+    gs_bot = gs_outer[1].subgridspec(1, 2, wspace=0.22)
+    ax2 = fig.add_subplot(gs_bot[0])
+    ax3 = fig.add_subplot(gs_bot[1])
+
+    # ── (a) time-series with segment shading ────────────────────────────────
+    seen_labels = set()
+    i = 0
+    while i < len(zones):
+        z = zones[i]
+        j = i + 1
+        while j < len(zones) and zones[j] == z:
+            j += 1
+        col   = ZONE_COLORS.get(z, "#EEEEEE")
+        label = ZONE_LABELS.get(z, z)
+        use_label = label if (label and label not in seen_labels) else None
+        ax0.axvspan(i, j, color=col, alpha=0.55, lw=0, label=use_label)
+        if use_label:
+            seen_labels.add(use_label)
+        i = j
+
+    ax0.fill_between(idx, angles, color=OURS_COLOR, alpha=0.22)
+    ax0.plot(idx, angles, color=OURS_COLOR, lw=1.2, alpha=0.75, label="Instantaneous $\Delta\psi$")
+    ax0.plot(idx, smooth, color="#222222", lw=2.2, label="Moving average")
+
+    ymax_data = angles.max() * 1.25
+    y_ceil    = max(ymax_data, 0.5)
+    ax0.set_ylim(0, y_ceil)
+    ax0.axhline(15.0, color="#888888", lw=1.6, ls="--", label=r"$\theta_{\max}=15°$")
+    pct95 = np.percentile(angles, 95)
+    ax0.axhline(pct95, color="#CC4400", lw=1.4, ls=":", label=f"P95 = {pct95:.2f}°")
+
+    # inset showing full scale
+    from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+    axin = inset_axes(ax0, width="14%", height="68%", loc="upper right",
+                      bbox_to_anchor=(-0.01, 0, 1, 1), bbox_transform=ax0.transAxes)
+    axin.plot(idx, angles, color=OURS_COLOR, lw=0.8, alpha=0.6)
+    axin.axhline(15.0, color="#888888", lw=1.2, ls="--")
+    axin.set_ylim(0, 16)
+    axin.set_xlim(0, len(angles))
+    axin.set_ylabel("deg", fontsize=FS - 4)
+    axin.tick_params(labelsize=FS - 5)
+    axin.set_title("Full scale", fontsize=FS - 4, pad=3)
+    axin.grid(True, axis="y", alpha=0.25)
+
+    ax0.set_title("(a) Tool-normal change per step along the full trajectory",
+                  pad=10, fontsize=TFS, fontweight="bold")
     ax0.set_xlabel("Path point index", fontsize=FS)
-    ax0.set_ylabel("Normal-vector change (deg)", fontsize=FS)
-    ax0.tick_params(labelsize=FS)
-    ax0.legend(loc="upper right", frameon=True, fontsize=FS)
-    ax0.grid(True, axis="y", alpha=0.25)
+    ax0.set_ylabel("$\Delta\psi$ (deg)", fontsize=FS)
+    ax0.tick_params(labelsize=FS - 1)
+    handles, labels_leg = ax0.get_legend_handles_labels()
+    ax0.legend(handles, labels_leg, loc="upper left", frameon=True,
+               fontsize=FS - 2, ncol=3, framealpha=0.85)
+    ax0.grid(True, axis="y", alpha=0.22)
 
-    ax1.hist(angles, bins=42, color=OURS_COLOR, alpha=0.86, edgecolor="white", linewidth=0.8)
-    ax1.set_title("(b) Distribution of posture increments",
-                  pad=14, fontsize=TFS, fontweight="bold")
-    ax1.set_xlabel("Normal-vector change (deg)", fontsize=FS)
-    ax1.set_ylabel("Frequency", fontsize=FS)
-    ax1.tick_params(labelsize=FS)
-    ax1.grid(True, axis="y", alpha=0.25)
+    # ── (b) per-phase violin ─────────────────────────────────────────────────
+    phase_map = {"repair": [], "transit": [], "approach": [], "retract": []}
+    for ang, z in zip(angles, zones):
+        phase_map.get(z, phase_map["repair"]).append(ang)
+    app_ret = phase_map["approach"] + phase_map["retract"]
+    groups  = [phase_map["repair"], phase_map["transit"], app_ret]
+    glabels = ["Repair", "Transit", "App./Ret."]
+    gcols   = [ZONE_COLORS["repair"], ZONE_COLORS["transit"], ZONE_COLORS["approach"]]
+    gcols_e = ["#3399CC", "#CC6600", "#228822"]
+
+    vp = ax2.violinplot(groups, positions=[1, 2, 3], showmedians=True,
+                        showextrema=True, widths=0.6)
+    for i_v, (body, ec) in enumerate(zip(vp["bodies"], gcols_e)):
+        body.set_facecolor(gcols[i_v])
+        body.set_edgecolor(ec)
+        body.set_alpha(0.80)
+    vp["cmedians"].set_color("#111111")
+    vp["cmedians"].set_linewidth(2.2)
+    for part in ("cbars", "cmins", "cmaxes"):
+        vp[part].set_color("#555555")
+        vp[part].set_linewidth(1.4)
+
+    meds = [np.median(g) for g in groups if g]
+    for xi, (med, g) in enumerate(zip(meds, groups), 1):
+        ax2.text(xi, med + max(angles) * 0.04, f"{med:.3f}°",
+                 ha="center", va="bottom", fontsize=FS - 3, color="#111111", fontweight="bold")
+
+    ax2.set_xticks([1, 2, 3])
+    ax2.set_xticklabels(glabels, fontsize=FS - 1)
+    ax2.set_ylabel("$\Delta\psi$ (deg)", fontsize=FS)
+    ax2.set_title("(b) Per-phase posture-change distribution",
+                  pad=10, fontsize=TFS, fontweight="bold")
+    ax2.tick_params(axis="y", labelsize=FS - 1)
+    ax2.grid(True, axis="y", alpha=0.25)
+
+    # ── (c) log-scale density histogram with percentile markers ─────────────
+    max_val = angles.max()
+    x_ceil  = max_val * 1.18
+    bins = np.linspace(0, x_ceil, 55)
+    counts, edges, patches = ax3.hist(angles, bins=bins, color=OURS_COLOR,
+                                      alpha=0.82, edgecolor="white", linewidth=0.7,
+                                      log=True)
+    ax3.set_xlim(0, x_ceil)
+    ax3.set_xlabel("$\Delta\psi$ (deg)", fontsize=FS)
+    ax3.set_ylabel("Count (log scale)", fontsize=FS)
+    ax3.set_title("(c) Posture-increment density (log scale)",
+                  pad=10, fontsize=TFS, fontweight="bold")
+    ax3.tick_params(labelsize=FS - 1)
+    ax3.grid(True, axis="y", alpha=0.22)
+
+    pct_vals = [(50, "#2266CC", "--"), (95, "#CC4400", ":"), (99, "#880000", "-.")]
+    pct_labels = []
+    for pct, col, ls in pct_vals:
+        v = np.percentile(angles, pct)
+        ax3.axvline(v, color=col, lw=1.8, ls=ls)
+        pct_labels.append(mpatches.Patch(color=col, label=f"P{pct} = {v:.3f}°"))
+    ax3.axvline(max_val, color="#550000", lw=1.8, ls="-")
+    pct_labels.append(mpatches.Patch(color="#550000", label=f"Max = {max_val:.3f}°"))
+    ax3.annotate(r"$\theta_{\max}=15°\!\gg\!$", xy=(x_ceil, 1),
+                 xytext=(x_ceil * 0.72, 2.5), fontsize=FS - 4, color="#888888",
+                 arrowprops=dict(arrowstyle="->", color="#888888", lw=1.2))
+    ax3.legend(handles=pct_labels, fontsize=FS - 3, frameon=True, framealpha=0.85)
+
+    # ── axis label for (b) becomes (c) if only 3 panels ────────────────────
+    # Add a 4th annotation: re-label ax3 as (c), ax2 as (b) — already done above.
+
     _save(fig, save_path)
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    paper_figs = os.path.join(script_dir, "..", "paper", "figures")
-    if os.path.isdir(paper_figs):
-        root, _ = os.path.splitext(save_path)
-        shutil.copy2(root + ".pdf", os.path.join(paper_figs, os.path.basename(root + ".pdf")))
+    for rel in [os.path.join("..", "paper", "figures"),
+                os.path.join("..", "paper", "IEEE", "figures"),
+                os.path.join("..", "paper", "elsevier", "figures")]:
+        dest = os.path.join(script_dir, rel)
+        if os.path.isdir(dest):
+            root, _ = os.path.splitext(save_path)
+            shutil.copy2(root + ".pdf", os.path.join(dest, os.path.basename(root + ".pdf")))
 
 
 def plot_comparison(results: Dict[str, Dict], save_path: str, metrics_to_plot: List[str] = None):
@@ -732,8 +853,8 @@ def plot_comparison(results: Dict[str, Dict], save_path: str, metrics_to_plot: L
     # Wider subplots when many methods so bar annotations stay readable
     subplot_w  = 6.0 if n_methods <= 5 else 8.0
     bar_w      = 0.55 if n_methods <= 5 else 0.42
-    ncol_leg   = n_methods if n_methods <= 5 else (n_methods + 1) // 2
-    bot_margin = 0.13 if n_methods <= 5 else 0.20
+    ncol_leg   = n_methods          # always one row
+    bot_margin = 0.13 if n_methods <= 5 else 0.15
 
     fig, axes = plt.subplots(1, n_met, figsize=(subplot_w * n_met, 6.2))
     axes = np.array(axes).reshape(-1)
@@ -765,18 +886,20 @@ def plot_comparison(results: Dict[str, Dict], save_path: str, metrics_to_plot: L
     fig.legend(handles=legend_handles, loc="lower center", ncol=ncol_leg,
                frameon=False, fontsize=FS,
                bbox_to_anchor=(0.5, 0.01),
-               handlelength=2.0, columnspacing=1.8)
+               handlelength=1.6, columnspacing=1.2)
 
-    # Save primary + mirror to paper/figures/
+    # Save primary + mirror to IEEE/Elsevier paper figures/
     _save(fig, save_path)
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    paper_figs = os.path.join(script_dir, "..", "paper", "figures")
-    if os.path.isdir(paper_figs):
-        root, _ = os.path.splitext(save_path)
-        src = root + ".pdf"
-        dst = os.path.join(paper_figs, os.path.basename(src))
-        shutil.copy2(src, dst)
-        logger.info("Comparison figure mirrored to paper/figures -> %s", dst)
+    root, _ = os.path.splitext(save_path)
+    src = root + ".pdf"
+    for rel in [os.path.join("..", "paper", "IEEE", "figures"),
+                os.path.join("..", "paper", "elsevier", "figures"),
+                os.path.join("..", "paper", "figures")]:
+        dest_dir = os.path.join(script_dir, rel)
+        if os.path.isdir(dest_dir):
+            shutil.copy2(src, os.path.join(dest_dir, os.path.basename(src)))
+            logger.info("Comparison figure mirrored -> %s", dest_dir)
 
 
 def plot_performance_landscape(summary: Dict[str, Dict], records: List[Dict], save_path: str,
@@ -896,22 +1019,24 @@ def plot_performance_landscape(summary: Dict[str, Dict], records: List[Dict], sa
 
     # ── Shared bottom legend ──────────────────────────────────────────────────
     legend_handles = [mpatches.Patch(color=c, label=l) for c, l in zip(colors, labels)]
-    ncol = min(len(methods), 5)
+    ncol = min(len(methods), 4)
     fig.legend(handles=legend_handles, loc="lower center", ncol=ncol,
                frameon=False, fontsize=FS,
-               bbox_to_anchor=(0.5, -0.02),
+               bbox_to_anchor=(0.5, -0.07),
                handlelength=2.0, columnspacing=1.8)
 
-    # Save primary path then mirror to paper/figures/
+    # Save primary path then mirror to IEEE and Elsevier paper figures/
     _save(fig, save_path)
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    paper_figs = os.path.join(script_dir, "..", "paper", "figures")
-    if os.path.isdir(paper_figs):
-        root, _ = os.path.splitext(save_path)
-        src = root + ".pdf"
-        dst = os.path.join(paper_figs, os.path.basename(src))
-        shutil.copy2(src, dst)
-        logger.info("Landscape figure mirrored to paper/figures -> %s", dst)
+    root, _ = os.path.splitext(save_path)
+    src = root + ".pdf"
+    for rel in [os.path.join("..", "paper", "IEEE", "figures"),
+                os.path.join("..", "paper", "elsevier", "figures"),
+                os.path.join("..", "paper", "figures")]:
+        dest_dir = os.path.join(script_dir, rel)
+        if os.path.isdir(dest_dir):
+            shutil.copy2(src, os.path.join(dest_dir, os.path.basename(src)))
+            logger.info("Landscape figure mirrored -> %s", dest_dir)
 
 
 def _normalized_score_matrix(summary, methods, metrics):

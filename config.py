@@ -108,6 +108,10 @@ class LocalPlannerConfig:
     candidate_speed_tapers: Tuple = (0.0, 0.18)
     local_field_samples: int = 17
     local_optimization: bool = True
+    # When True: optimize spacing/expansion/speed/entry but fix direction to
+    # the defect principal axis (offset_deg=0 only). Isolates the direction
+    # search contribution from the rest of local optimization.
+    fixed_direction_only: bool = False
 
 
 # ── 过渡路径 ──────────────────────────────────────────────────────────────────

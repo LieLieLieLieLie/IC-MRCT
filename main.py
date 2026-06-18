@@ -22,7 +22,7 @@ import numpy as np
 
 from config import get_config
 from defect import AreaDefect, Pit, Scratch
-from global_planner import GlobalPlanner, build_cost_matrix, greedy_tour, merge_overlapping
+from global_planner import GlobalPlanner, build_cost_matrix, greedy_tour, two_opt, merge_overlapping
 from local_planner import LocalPlanner
 from transition import TransitionPlanner
 from dataset import generate_scene
@@ -52,6 +52,9 @@ METHODS = {
     "Random": "random",
     "Nearest Neighbor": "nearest",
     "Priority First": "priority",
+    "Distance-TSP": "dist_tsp",
+    "Dist+Posture TSP": "dist_posture_tsp",
+    "Dist+Obstacle TSP": "dist_obstacle_tsp",
     "Ours": "ours",
 }
 
@@ -65,6 +68,7 @@ ABLATIONS = {
     "No Obstacle Avoidance": {"w_obstacle": 0.0, "obstacle_avoidance": False, "multi_start_route_search": False},
     "No Local Optimization": {"local_optimization": False},
     "No Smooth Transition": {"smooth_transition": False},
+    "Fixed Local Dir": {"fixed_direction_only": True},
 }
 
 
@@ -123,6 +127,19 @@ def _order_defects(scene, cfg, method):
     if method == "priority":
         return sorted(merged, key=lambda d: (-int(d.priority), d.cx, d.cy))
 
+    # ── Graduated TSP baselines (greedy + 2-opt, varying cost terms) ──────────
+    if method in ("dist_tsp", "dist_posture_tsp", "dist_obstacle_tsp"):
+        w_d = 1.0
+        w_n = 0.3 if method == "dist_posture_tsp" else 0.0
+        w_o = 0.3 if method == "dist_obstacle_tsp" else 0.0
+        cost, _, _, _, _ = build_cost_matrix(
+            merged, cfg.surface,
+            w_distance=w_d, w_posture=w_n, w_priority=0.0, w_obstacle=w_o,
+            robot_pos=robot_start, obstacles=obstacles,
+        )
+        tour = two_opt(greedy_tour(cost), cost)
+        return [merged[i - 1] for i in tour[1:]]
+
     raise ValueError(f"Unknown method: {method}")
 
 
@@ -131,7 +148,8 @@ def run_scene_method(scene, cfg, method):
     if "surface_cfg" in scene:
         run_cfg.surface = copy.deepcopy(scene["surface_cfg"])
 
-    if method != "ours":
+    _simple_baselines = {"random", "nearest", "priority"}
+    if method in _simple_baselines:
         run_cfg.transition.obstacle_avoidance = False
         run_cfg.transition.smooth_transition = False
         run_cfg.local_p.local_optimization = False

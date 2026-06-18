@@ -262,7 +262,8 @@ def optimize_local_plan(defect: Defect, cfg, base_params: Dict) -> Dict:
     base_angle = z.core_angle
     best = None
 
-    for offset_deg in lp.candidate_angle_offsets:
+    angle_offsets = (0.0,) if getattr(lp, "fixed_direction_only", False) else lp.candidate_angle_offsets
+    for offset_deg in angle_offsets:
         angle = base_angle + np.radians(float(offset_deg))
         anisotropy_reward = abs(np.cos(angle - base_angle))
         for expand in lp.candidate_expand_factors:
